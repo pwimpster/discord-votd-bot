@@ -117,3 +117,9 @@ if __name__ == "__main__":
 
     # Start Discord bot
     bot.run(DISCORD_TOKEN)
+
+
+@tasks.loop(time=send_time)
+async def send_daily_verse():
+    print("📖 Verse of the Day task triggered")
+    ...
