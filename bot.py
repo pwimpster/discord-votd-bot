@@ -1,129 +1,107 @@
 import os
-from threading import Thread
-from datetime import datetime, time, timedelta, timezone
-
 import discord
-from discord.ext import tasks, commands
+from discord.ext import commands, tasks
+import aiohttp
+from datetime import datetime
+import pytz
 from flask import Flask
+import threading
 
-# ------------------------
-# FLASK SERVER FOR RENDER
-# ------------------------
-
-server = Flask(__name__)
-
-@server.route("/")
-def home():
-    return "Discord VOTD bot is running!"
-
-def run_server():
-    port = int(os.getenv("PORT", "10000"))  # Render sets PORT automatically
-    print(f"[FLASK] Starting web server on port {port}")
-    server.run(host="0.0.0.0", port=port)
-
-def keep_alive():
-    t = Thread(target=run_server)
-    t.daemon = True
-    t.start()
-
-# ------------------------
-# DISCORD BOT
-# ------------------------
-
-# Central Time (adjust if you want a different TZ)
-CT = timezone(timedelta(hours=-6))
-
+# -----------------------------
+# CONFIG
+# -----------------------------
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID_STR = os.getenv("DISCORD_CHANNEL_ID", "0")
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # Discord channel ID
+VOTD_API_URL = "https://bible-votd-api.onrender.com/votd"
 
-try:
-    CHANNEL_ID = int(CHANNEL_ID_STR)
-except ValueError:
-    CHANNEL_ID = 0
+CENTRAL_TZ = pytz.timezone("US/Central")
+last_sent_date = None
 
-VERSE_OF_THE_DAY_URL = "https://www.bible.com/verse-of-the-day"
-
+# -----------------------------
+# DISCORD BOT SETUP
+# -----------------------------
 intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-last_sent_date = None  # track if we've sent today's verse yet
+# -----------------------------
+# FLASK (keeps Render alive)
+# -----------------------------
+app = Flask(__name__)
 
+@app.route("/")
+def home():
+    return "Discord VOTD Bot is running!"
 
+def run_flask():
+    app.run(host="0.0.0.0", port=10000)
+
+# -----------------------------
+# FETCH VOTD
+# -----------------------------
+async def fetch_votd():
+    async with aiohttp.ClientSession() as session:
+        async with session.get(VOTD_API_URL) as resp:
+            return await resp.json()
+
+# -----------------------------
+# SCHEDULED TASK
+# -----------------------------
+@tasks.loop(minutes=1)
+async def send_votd():
+    global last_sent_date
+
+    now = datetime.now(CENTRAL_TZ)
+    print(f"⏰ VOTD check: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
+
+    # Only send at exactly 8:00 AM CT
+    if now.hour != 8 or now.minute != 0:
+        return
+
+    # Prevent duplicate sends
+    if last_sent_date == now.date():
+        print("⚠️ VOTD already sent today")
+        return
+
+    channel = bot.get_channel(CHANNEL_ID)
+    if channel is None:
+        print("❌ Channel not found — check CHANNEL_ID")
+        return
+
+    data = await fetch_votd()
+
+    verse_text = data["text"]
+    reference = data["reference"]
+    image_url = data["image_url"]
+
+    message = (
+        f"📖 **Verse of the Day**\n\n"
+        f"“{verse_text}”\n"
+        f"— *{reference}*\n\n"
+        f"[pic]({image_url}) • PwimpMyWide"
+    )
+
+    await channel.send(message)
+    last_sent_date = now.date()
+
+    print("✅ VOTD sent successfully")
+
+# -----------------------------
+# BOT EVENTS
+# -----------------------------
 @bot.event
 async def on_ready():
     print(f"[DISCORD] Logged in as {bot.user} (ID: {bot.user.id})")
     print(f"[DISCORD] Target channel ID: {CHANNEL_ID}")
-    send_votd.start()
 
+    if not send_votd.is_running():
+        send_votd.start()
+        print("[VOTD] Scheduler started")
+    else:
+        print("[VOTD] Scheduler already running")
 
-@tasks.loop(minutes=1)
-async def send_votd():
-    """Check once per minute and send at 8:00 AM CT if not sent yet."""
-    global last_sent_date
-
-    if CHANNEL_ID == 0:
-        print("[WARN] DISCORD_CHANNEL_ID not set or invalid.")
-        return
-
-    now = datetime.now(CT)
-    today = now.date()
-
-    # Already sent today
-    if last_sent_date == today:
-        return
-
-    target = time(hour=14, minute=0, tzinfo=CT)
-
-    if now.time().hour == target.hour and now.time().minute == target.minute:
-        channel = bot.get_channel(CHANNEL_ID)
-        if channel is None:
-            print("[WARN] Channel not found. Check DISCORD_CHANNEL_ID.")
-            return
-
-        msg = (
-            "📖 **Verse of the Day**\n"
-            f"Here’s today’s verse from the Bible App:\n{VERSE_OF_THE_DAY_URL}"
-        )
-        await channel.send(msg)
-        last_sent_date = today
-        print(f"[DISCORD] Sent VOTD for {today}")
-
-
-@send_votd.before_loop
-async def before_send_votd():
-    await bot.wait_until_ready()
-
-
-# Optional: command to trigger manually in Discord
-@bot.command(name="votd")
-async def votd_command(ctx: commands.Context):
-    await ctx.send(
-        f"📖 **Verse of the Day**\n{VERSE_OF_THE_DAY_URL}"
-    )
-
-
-# ------------------------
+# -----------------------------
 # START EVERYTHING
-# ------------------------
-
+# -----------------------------
 if __name__ == "__main__":
-    if not DISCORD_TOKEN:
-        raise RuntimeError("DISCORD_TOKEN environment variable is not set.")
-    if CHANNEL_ID == 0:
-        raise RuntimeError("DISCORD_CHANNEL_ID environment variable is missing or invalid.")
-
-    # Start Flask keep-alive web server (for Render free Web Service)
-    keep_alive()
-
-    # Start Discord bot
+    threading.Thread(target=run_flask).start()
     bot.run(DISCORD_TOKEN)
-
-
-@tasks.loop(time=send_time)
-async def send_daily_verse():
-    print("📖 Verse of the Day task triggered")
-    ...
-
-if channel is None:
-    print("❌ Channel not found")
-    return
