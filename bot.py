@@ -58,7 +58,7 @@ async def on_ready():
 
 @tasks.loop(minutes=1)
 async def send_votd():
-    """Check once per minute and send at 6:00 AM CT if not sent yet."""
+    """Check once per minute and send at 8:00 AM CT if not sent yet."""
     global last_sent_date
 
     if CHANNEL_ID == 0:
@@ -72,7 +72,7 @@ async def send_votd():
     if last_sent_date == today:
         return
 
-    target = time(hour=6, minute=0, tzinfo=CT)
+    target = time(hour=14, minute=0, tzinfo=CT)
 
     if now.time().hour == target.hour and now.time().minute == target.minute:
         channel = bot.get_channel(CHANNEL_ID)
@@ -123,4 +123,5 @@ if __name__ == "__main__":
 async def send_daily_verse():
     print("📖 Verse of the Day task triggered")
     ...
+
 
