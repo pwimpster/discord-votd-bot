@@ -124,4 +124,6 @@ async def send_daily_verse():
     print("📖 Verse of the Day task triggered")
     ...
 
-
+if channel is None:
+    print("❌ Channel not found")
+    return
