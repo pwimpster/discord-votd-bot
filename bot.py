@@ -8,11 +8,11 @@ from flask import Flask
 import threading
 
 # -----------------------------
-# CONFIG
+# CONFIG (CHANGE THESE)
 # -----------------------------
 DISCORD_TOKEN = os.getenv("DISCORD_TOKEN")
-CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # Discord channel ID
-VOTD_API_URL = "https://bible-votd-api.onrender.com/votd"
+CHANNEL_ID = int(os.getenv("CHANNEL_ID"))  # REQUIRED ENV VAR
+VOTD_API_URL = "https://bible-votd-api.onrender.com/votd_json"
 
 CENTRAL_TZ = pytz.timezone("US/Central")
 last_sent_date = None
@@ -24,7 +24,7 @@ intents = discord.Intents.default()
 bot = commands.Bot(command_prefix="!", intents=intents)
 
 # -----------------------------
-# FLASK (keeps Render alive)
+# FLASK KEEP-ALIVE (Render)
 # -----------------------------
 app = Flask(__name__)
 
@@ -36,39 +36,49 @@ def run_flask():
     app.run(host="0.0.0.0", port=10000)
 
 # -----------------------------
-# FETCH VOTD FROM API
+# FETCH JSON VOTD
 # -----------------------------
-async def fetch_votd():
+async def fetch_votd_json():
     async with aiohttp.ClientSession() as session:
         async with session.get(VOTD_API_URL, timeout=10) as resp:
             if resp.status != 200:
-                raise ValueError("VOTD API error")
-            return await resp.text()
-
-
-# -----------------------------
-# SEND VERSE (SAFE VERSION)
-# -----------------------------
-async def send_verse(channel):
-    verse_text = await fetch_votd()
-
-    message = (
-        f"📖 **Verse of the Day**\n\n"
-        f"{verse_text}\n\n"
-        f"• PwimpMyWide"
-    )
-
-    await channel.send(message)
+                raise ValueError("Failed to fetch VOTD")
+            return await resp.json()
 
 # -----------------------------
-# DAILY SCHEDULED TASK
+# SLASH COMMAND: /votd
+# -----------------------------
+@bot.tree.command(name="votd", description="Get today's Verse of the Day")
+async def votd(interaction: discord.Interaction):
+    await interaction.response.defer()
+
+    try:
+        data = await fetch_votd_json()
+
+        message = (
+            f"📖 **Verse of the Day**\n\n"
+            f"“{data['text']}”\n"
+            f"— *{data['reference']}*\n\n"
+            f"• PwimpMyWide"
+        )
+
+        await interaction.followup.send(message)
+
+    except Exception as e:
+        print("❌ /votd error:", e)
+        await interaction.followup.send(
+            "⚠️ Something went wrong fetching the Verse of the Day.",
+            ephemeral=True
+        )
+
+# -----------------------------
+# DAILY SCHEDULED POST (8 AM CT)
 # -----------------------------
 @tasks.loop(minutes=1)
-async def send_votd_daily():
+async def send_votd():
     global last_sent_date
 
     now = datetime.now(CENTRAL_TZ)
-    print(f"⏰ VOTD check: {now.strftime('%Y-%m-%d %H:%M:%S %Z')}")
 
     if now.hour != 8 or now.minute != 0:
         return
@@ -78,57 +88,40 @@ async def send_votd_daily():
 
     channel = bot.get_channel(CHANNEL_ID)
     if channel is None:
-        print("❌ Channel not found — check CHANNEL_ID")
+        print("❌ Channel not found")
         return
 
     try:
-        await send_verse(channel)
+        data = await fetch_votd_json()
+
+        message = (
+            f"📖 **Verse of the Day**\n\n"
+            f"“{data['text']}”\n"
+            f"— *{data['reference']}*\n\n"
+            f"• PwimpMyWide"
+        )
+
+        await channel.send(message)
         last_sent_date = now.date()
-        print("✅ Daily VOTD sent")
-    except Exception as e:
-        print(f"❌ Daily VOTD error: {e}")
-
-# -----------------------------
-# SLASH COMMAND: /votd
-# -----------------------------
-@bot.tree.command(name="votd", description="Get the Verse of the Day now")
-async def votd_now(interaction: discord.Interaction):
-    await interaction.response.defer(thinking=True)
-
-    try:
-        await send_verse(interaction.channel)
-
-        await interaction.followup.send(
-            "📖 Verse of the Day sent!",
-            ephemeral=True
-        )
+        print("✅ Scheduled VOTD sent")
 
     except Exception as e:
-        print(f"❌ /votd error: {e}")
-
-        await interaction.followup.send(
-            "⚠️ Something went wrong fetching the Verse of the Day.",
-            ephemeral=True
-        )
+        print("❌ Scheduled VOTD error:", e)
 
 # -----------------------------
-# BOT EVENTS
+# BOT READY
 # -----------------------------
 @bot.event
 async def on_ready():
-    print(f"[DISCORD] Logged in as {bot.user} (ID: {bot.user.id})")
-
+    print(f"[DISCORD] Logged in as {bot.user}")
     await bot.tree.sync()
-    print("[DISCORD] Slash commands synced")
 
-    if not send_votd_daily.is_running():
-        send_votd_daily.start()
-        print("[VOTD] Daily scheduler started")
+    if not send_votd.is_running():
+        send_votd.start()
 
 # -----------------------------
 # START EVERYTHING
 # -----------------------------
 if __name__ == "__main__":
-    threading.Thread(target=run_flask, daemon=True).start()
+    threading.Thread(target=run_flask).start()
     bot.run(DISCORD_TOKEN)
-
