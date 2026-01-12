@@ -70,8 +70,11 @@ async def votd_image(interaction: discord.Interaction):
 # -----------------------------
 @bot.event
 async def on_ready():
-    print(f"[DISCORD] Logged in as {bot.user}")
+    print(f"Logged in as {bot.user}")
+    await bot.tree.clear_commands(guild=None)
     await bot.tree.sync()
+    print("Slash commands resynced")
+
 
 # -----------------------------
 # START
@@ -79,3 +82,4 @@ async def on_ready():
 if __name__ == "__main__":
     threading.Thread(target=run_flask).start()
     bot.run(DISCORD_TOKEN)
+
