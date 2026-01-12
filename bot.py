@@ -42,27 +42,20 @@ async def fetch_votd():
     async with aiohttp.ClientSession() as session:
         async with session.get(VOTD_API_URL, timeout=10) as resp:
             if resp.status != 200:
-                raise ValueError(f"VOTD API returned status {resp.status}")
-            return await resp.json()
+                raise ValueError("VOTD API error")
+            return await resp.text()
+
 
 # -----------------------------
 # SEND VERSE (SAFE VERSION)
 # -----------------------------
 async def send_verse(channel):
-    data = await fetch_votd()
-
-    verse_text = data.get("text")
-    reference = data.get("reference")
-    image_url = data.get("image_url")
-
-    if not verse_text or not reference:
-        raise ValueError("Invalid VOTD API response")
+    verse_text = await fetch_votd()
 
     message = (
         f"📖 **Verse of the Day**\n\n"
-        f"“{verse_text}”\n"
-        f"— *{reference}*\n\n"
-        f"[pic]({image_url}) • PwimpMyWide"
+        f"{verse_text}\n\n"
+        f"• PwimpMyWide"
     )
 
     await channel.send(message)
@@ -138,3 +131,4 @@ async def on_ready():
 if __name__ == "__main__":
     threading.Thread(target=run_flask, daemon=True).start()
     bot.run(DISCORD_TOKEN)
+
